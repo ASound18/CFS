@@ -57,7 +57,7 @@ shinyServer(function(input, output, session) {
   ## save ledger file when upload
   observeEvent(input$ledgerUploadOK,{
     values$ledger_df$AS_OF_DATE = input$ledgerDate
-    write.csv(values$ledger_df, paste0('LedgerFileArchive/LedgerTable ', input$ledgerDate, '.csv'), row.names = FALSE, fileEncoding = "GB2312")
+    write.csv(values$ledger_df, paste0('LedgerFileArchive/LedgerTable ', input$ledgerDate, '.csv'), quote = FALSE, row.names = FALSE, fileEncoding = "GB2312")
     shinyalert(title = "上传成功!", type = "success")
     removeModal()
   })
@@ -282,7 +282,7 @@ shinyServer(function(input, output, session) {
       paste('Ledger Table Results -', Sys.Date(), '.csv', sep='')
     },
     content = function(con) {
-      write.csv(values$ledger_df_commission, con)
+      write.csv(values$ledger_df_commission, con, row.names = FALSE, fileEncoding = "GB2312", quote=F)
     }
   )
   
@@ -321,7 +321,7 @@ shinyServer(function(input, output, session) {
     values$fee_df <- values$fee_df[!duplicated(values$fee_df$CounterpartyName, fromLast=T),]
     ## save to csv
     write.csv(values$fee_df,"FeeTable.csv", row.names = FALSE, fileEncoding = "GB2312", quote=F)
-    write.csv(values$fee_df,paste0("FeeTableArchive/FeeTable ",Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "UTF-8", quote=F) ## also save to archive
+    write.csv(values$fee_df,paste0("FeeTableArchive/FeeTable ",Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "GB2312", quote=F) ## also save to archive
     shinyalert(title = "Saved!", type = "success")
   })
   
@@ -339,7 +339,7 @@ shinyServer(function(input, output, session) {
       values$fee_df <- values$fee_df[!duplicated(values$fee_df$CounterpartyName, fromLast=T),]
       ## save to csv and download
       write.csv(values$fee_df,"FeeTable.csv", row.names = FALSE, fileEncoding = "GB2312", quote=F)  ## also save in download
-      write.csv(values$fee_df, con)
+      write.csv(values$fee_df, con, row.names = FALSE, fileEncoding = "GB2312", quote=F)
     }
   )
   
