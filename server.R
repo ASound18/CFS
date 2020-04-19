@@ -3,6 +3,9 @@ library(DT)
 library(shinyalert)
 library(readr)
 library(shinyjs)
+library(shinymanager)
+library(data.table)
+library(plotly)
 
 ## host on local ip
 options(shiny.host = "192.168.1.6")
@@ -11,11 +14,23 @@ options(shiny.port = 80)
 
 shinyServer(function(input, output, session) {
   
-  # handle Chinese characters
+  ## secure login
+  credentials <- data.frame(
+    user = c("Vimo","Admin"),
+    password = c("Vimo", "Admin"),
+    stringsAsFactors = FALSE
+  )
+  result_auth <- secure_server(check_credentials = check_credentials(credentials))
+  # output$res_auth <- renderPrint({
+  #   reactiveValuesToList(result_auth)
+  # })
+  
+  ## handle Chinese characters
   Sys.setlocale(category = "LC_ALL", locale = "chs")
   
   ## reactive values
   values <- reactiveValues()
+
   
   ## ~~~~ Tab1: 台账上传 ~~~~
   output$ledgerTable <- renderTable({
@@ -26,6 +41,10 @@ shinyServer(function(input, output, session) {
                        col_types = "cccccddcccc", 
                        col_names = c("Borrower","Borrower Trader","Lender","Lender Trader","Term","Volume","Rate","Depo.Repo","Bid.Broker","Ask.Broker","Net"),
                        locale = readr::locale(encoding = "GB2312")) #GB2312
+        ## remove first row if it is header
+        if (df$Borrower[1]=="Borrower") {
+          df = df[-1,]
+        }
         ## handle spaces
         df$Borrower <- unlist(lapply(df$Borrower,function(x) gsub('\\s+', '',x)))
         df$Lender <- unlist(lapply(df$Lender,function(x) gsub('\\s+', '',x)))
@@ -66,16 +85,25 @@ shinyServer(function(input, output, session) {
   ## ~~~~ Tab2: 佣金计算 ~~~~
   computeCommission <- function(item, fee) {
     borrower = toupper(item["Borrower"])
-    # print(borrower)
+    borrower_trader = item["Borrower Trader"]
     lender = toupper(item["Lender"])
+    lender_trader = item["Lender Trader"]
     term = item["Term"]
     volume = as.numeric(item["Volume"])
     depoRepo = tolower(item["Depo.Repo"])
     bidBroker = item["Bid.Broker"]
     askBroker = item["Ask.Broker"]
     net = tolower(item["Net"])
+    asOfDate = as.Date(item["AS_OF_DATE"])
     fee_borrower = fee[fee$CounterpartyName==borrower,]
     fee_lender = fee[fee$CounterpartyName==lender,]
+    ## handle counterparty with multiple traders
+    if (nrow(fee_borrower)>1) {
+      fee_borrower = fee_borrower[sapply(fee_borrower$Trader, function(x) grepl(x, borrower_trader, fixed=TRUE)),]
+    }
+    if (nrow(fee_lender)>1) {
+      fee_lender = fee_lender[sapply(fee_lender$Trader, function(x) grepl(x, lender_trader, fixed=TRUE)),]
+    }  
     ## handle missing CP (this should not happen since CP is forced to exist)
     if (nrow(fee_borrower)==0 | nrow(fee_lender)==0) {
       ans = list(
@@ -103,6 +131,9 @@ shinyServer(function(input, output, session) {
       term = as.numeric(substr(term, 1, nchar(term)-1)) * 30 ## convert months to days
     } else {
       term = as.numeric(term)
+    }
+    if (term==1 & weekdays(asOfDate)=="星期五"){
+      term = 3
     }
     ## determine rate by type
     if (depoRepo=="buyout") {
@@ -189,6 +220,8 @@ shinyServer(function(input, output, session) {
   
   observeEvent(input$compute,{
     validate(need(values$ledger_df,"未检测到文件"))
+    req(input$ledgerUploadOK)
+    
     ledger_df = values$ledger_df
     fee_df = values$fee_df
     ledger_df$Borrower = toupper(ledger_df$Borrower)
@@ -273,6 +306,20 @@ shinyServer(function(input, output, session) {
       res$Transactions = as.integer(res$Transactions)
       res[order(res$Commission, decreasing = TRUE),] 
     })
+    
+    ## potential miscalculated transactions
+    output$viewMiscalculated <- renderTable({
+      broker_list = values$fee_df$Broker
+      ledger_df_miscalculated = ledger_df_commission[
+        is.na(ledger_df_commission$borrower_commission) | 
+        is.na(ledger_df_commission$borrower_commission) |
+        !ledger_df_commission$bidBroker %in% broker_list | 
+        !ledger_df_commission$askBroker %in% broker_list,]
+      validate(need(nrow(ledger_df_miscalculated)>0, "No potentially miscalculated items."))
+      ledger_df_miscalculated
+    }, caption="Potentially Miscalculated Items:",
+       caption.placement = getOption("xtable.caption.placement", "top"),
+       caption.width = getOption("xtable.caption.width", NULL))
   })
   
   
@@ -286,7 +333,87 @@ shinyServer(function(input, output, session) {
     }
   )
   
+  ## ~~~~ Tab3: 综合分析 ~~~~
+  observeEvent(input$analysis, {
+    start_date = input$analysisDateRange[1]
+    end_date = input$analysisDateRange[2]
+    ledger_filenames = list.files("LedgerFileArchive")
+    ledger_filenames_selected = ledger_filenames[(ledger_filenames>=paste0("LedgerTable ",start_date,".csv"))&(ledger_filenames<=paste0("LedgerTable ",end_date,".csv"))] 
+    
+    validate(need(length(ledger_filenames_selected)>0, "No archived ledger files within range."))
+    ledger_df = do.call(rbind, lapply(ledger_filenames_selected, function(x) read_csv(paste0("LedgerFileArchive/",x), locale = readr::locale(encoding = "GB2312"), col_types = "cccccddccccD")))
+
+    ## calculate fee
+    withProgress(message = 'Generating data', value = 0.6, {
+      ans_computeCommission = apply(ledger_df, 1, computeCommission, fee = values$fee_df)
+      ledger_df$borrower_commission = unlist(lapply(ans_computeCommission, function(x) x$borrower_commission))
+      ledger_df$lender_commission = unlist(lapply(ans_computeCommission, function(x) x$lender_commission))
+      ledger_df$bidBroker_commission = unlist(lapply(ans_computeCommission, function(x) x$bidBroker_commission))
+      ledger_df$askBroker_commission = unlist(lapply(ans_computeCommission, function(x) x$askBroker_commission))
+      ledger_df$bidBroker = unlist(lapply(ans_computeCommission, function(x) x$bidBroker))
+      ledger_df$askBroker = unlist(lapply(ans_computeCommission, function(x) x$askBroker))
+      ledger_df$depoRepo = unlist(lapply(ans_computeCommission, function(x) x$depoRepo))
+      ## rounding numbers
+      ledger_df$borrower_commission=round(ledger_df$borrower_commission,4)
+      ledger_df$lender_commission=round(ledger_df$lender_commission,4)
+      ledger_df$bidBroker_commission=round(ledger_df$bidBroker_commission,4)
+      ledger_df$askBroker_commission=round(ledger_df$askBroker_commission,4)      
+    })
+    ## save to reactiveValues
+    values$ledger_df_analysis <- ledger_df
+
+  })
   
+  ## ui of counterparty selectInput
+  output$analysisCP_ui <- renderUI({
+    req(values$fee_df)
+    counterparty_names = c("All",sort(unique(values$fee_df$CounterpartyName)))
+    selectInput("analysisCP", "Select Counterparties:", choices=counterparty_names, selected="All", multiple=TRUE)
+  })
+  
+  ## analysis plot
+  output$analysisPlot <- renderPlotly({
+    req(values$ledger_df_analysis)
+    df_plot = values$ledger_df_analysis
+    df_plot$total_commission = df_plot$borrower_commission + df_plot$lender_commission
+    ## filter by selected product
+    df_plot = df_plot[df_plot$depoRepo %in% input$analysisProduct,]
+    ## filter by selected counterparty
+    if (!"All" %in% input$analysisCP) {
+      df_plot = df_plot[(toupper(df_plot$Borrower) %in% input$analysisCP) | (toupper(df_plot$Lender) %in% input$analysisCP),]
+    }
+    
+    validate(need(nrow(df_plot)>0, "No data to analysis."))
+    ## aggregate by selected measure
+    if (input$analysisMeasure == "Commission") {
+      df_plot_agg = aggregate(total_commission ~ AS_OF_DATE, df_plot, sum)
+      colnames(df_plot_agg)[2] <- "measure"
+    } else if (input$analysisMeasure == "Volume") {
+      df_plot_agg = aggregate(Volume ~ AS_OF_DATE, df_plot, sum)
+      colnames(df_plot_agg)[2] <- "measure"
+    } else if (input$analysisMeasure == "Transactions") {
+      df_plot_agg = aggregate(Volume ~ AS_OF_DATE, df_plot, length)
+      colnames(df_plot_agg)[2] <- "measure"
+    }
+    
+    ## plotly
+    plt <- plot_ly(
+      data = df_plot_agg,
+      x = ~AS_OF_DATE,
+      y = ~measure,
+      type = 'scatter',
+      mode = 'lines+markers'
+    )%>% layout(title = paste0("Trend of Total ",input$analysisMeasure),
+                yaxis = list(title = input$analysisMeasure),
+                xaxis = list(title = "Date"))
+    
+  })
+  
+  
+  
+  
+  
+    
   ## ~~~~ Tab4: 费率表 ~~~~
   values$fee_df <- read_csv("FeeTable.csv",col_types = cols(), locale = readr::locale(encoding = "GB2312"))
   
@@ -317,8 +444,8 @@ shinyServer(function(input, output, session) {
     values$fee_df$CounterpartyName <- toupper(values$fee_df$CounterpartyName)
     ## remove spaces in counterparty name
     values$fee_df$CounterpartyName <- unlist(lapply(values$fee_df$CounterpartyName,function(x) gsub('\\s+', '',x)))
-    ## remove duplicated rows by counterparty name (keep last)
-    values$fee_df <- values$fee_df[!duplicated(values$fee_df$CounterpartyName, fromLast=T),]
+    ## remove duplicated rows by counterparty name and trader name (keep last)
+    values$fee_df <- unique(values$fee_df, by=c("CounterpartyName","Trader"), fromLast=TRUE)
     ## save to csv
     write.csv(values$fee_df,"FeeTable.csv", row.names = FALSE, fileEncoding = "GB2312", quote=F)
     write.csv(values$fee_df,paste0("FeeTableArchive/FeeTable ",Sys.Date(),".csv"), row.names = FALSE, fileEncoding = "GB2312", quote=F) ## also save to archive
@@ -335,8 +462,8 @@ shinyServer(function(input, output, session) {
       values$fee_df$CounterpartyName <- toupper(values$fee_df$CounterpartyName)
       ## remove spaces in counterparty name
       values$fee_df$CounterpartyName <- unlist(lapply(values$fee_df$CounterpartyName,function(x) gsub('\\s+', '',x)))
-      ## remove duplicated rows by counterparty name (keep last)
-      values$fee_df <- values$fee_df[!duplicated(values$fee_df$CounterpartyName, fromLast=T),]
+      ## remove duplicated rows by counterparty name and trader name (keep last)
+      values$fee_df <- unique(values$fee_df, by=c("CounterpartyName","Trader"), fromLast=TRUE)
       ## save to csv and download
       write.csv(values$fee_df,"FeeTable.csv", row.names = FALSE, fileEncoding = "GB2312", quote=F)  ## also save in download
       write.csv(values$fee_df, con, row.names = FALSE, fileEncoding = "GB2312", quote=F)
