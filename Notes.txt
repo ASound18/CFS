@@ -1,0 +1,5 @@
+台账：
+1.Net(导量)一列如果不填任何值则是“不导量”，如果是其他任意值如"net"则是“导量”
+2.对于发生在周五的隔夜交易，如果其后周末未休息日，则计算佣金时期限自动增加两天
+3.对于Potentially Miscalculated Items的定义，(borrower_commision为NA)或者(lender_commision为NA)或者(bidBroker不再费率表中)或者(askBroker不再费率表中)
+
