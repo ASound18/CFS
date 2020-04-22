@@ -502,6 +502,7 @@ shinyServer(function(input, output, session) {
     showModal(modalDialog(
       title = "新增信息",
       textInput("feeTableAdd_CounterpartyName", "CounterpartyName:"),
+      textInput("feeTableAdd_trader", "Trader:"),
       textInput("feeTableAdd_B_1D_7D", "B_1D_7D:"),
       textInput("feeTableAdd_B_8D_1M", "B_8D_1M:"),
       textInput("feeTableAdd_B_Over_1M", "B_Over_1M:"),
@@ -520,6 +521,7 @@ shinyServer(function(input, output, session) {
   observeEvent(input$feeTableAddOK, {
     new_row = data.frame(
       CounterpartyName = as.character(input$feeTableAdd_CounterpartyName),
+      Trader = as.character(input$feeTableAdd_trader),
       B_1D_7D = as.character(input$feeTableAdd_B_1D_7D),
       B_8D_1M = as.character(input$feeTableAdd_B_8D_1M),
       B_Over_1M = as.character(input$feeTableAdd_B_Over_1M),
