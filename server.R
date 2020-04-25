@@ -45,6 +45,8 @@ shinyServer(function(input, output, session) {
         if (df$Borrower[1]=="Borrower") {
           df = df[-1,]
         }
+        ## remove empty rows
+        df <- df[rowSums(is.na(df)) != ncol(df),]
         ## handle spaces
         df$Borrower <- unlist(lapply(df$Borrower,function(x) gsub('\\s+', '',x)))
         df$Lender <- unlist(lapply(df$Lender,function(x) gsub('\\s+', '',x)))
