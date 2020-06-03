@@ -277,7 +277,7 @@ shinyServer(function(input, output, session) {
     output$compute_summary <- renderTable({
       data.frame(
         "Type" = c("Repo","Shibor","Buyout","Total"),
-        "Commission" = c(sum(ledger_df_commission_repo$borrower_commission, na.rm=T) + sum(ledger_df_commission$lender_commission, na.rm=T),
+        "Commission" = c(sum(ledger_df_commission_repo$borrower_commission, na.rm=T) + sum(ledger_df_commission_repo$lender_commission, na.rm=T),
                          sum(ledger_df_commission_depo$borrower_commission, na.rm=T) + sum(ledger_df_commission_depo$lender_commission, na.rm=T),
                          sum(ledger_df_commission_buyout$borrower_commission, na.rm=T) + sum(ledger_df_commission_buyout$lender_commission, na.rm=T),
                          sum(ledger_df_commission$borrower_commission, na.rm=T) + sum(ledger_df_commission$lender_commission, na.rm=T)
